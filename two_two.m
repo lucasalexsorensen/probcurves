@@ -10,7 +10,7 @@ imsize = (size(im, 1) * size(im, 2));
 [xs, ys] = build_snake(250, 250, 175);
 mask = poly2mask(xs, ys, size(im, 1), size(im, 2));
 masksize = length(find(im(mask)));
-
+x
 global probcache;
 probcache = -1 * ones(1, 256);
 
