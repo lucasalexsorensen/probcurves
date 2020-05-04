@@ -3,11 +3,11 @@ addpath('probabilistic_data');
 
 % load image
 im = imread('textured_test.png');
-im = imresize(im, 0.4);
+im = imgaussfilt(im, 1);
 im_cw = reshape(im, [size(im,1)*size(im,2), 1]); % columnwise unwrap
 
 % make patches
-M = 16; % patch size
+M = 11; % patch size
 patches = extractPatches(im, [M M]);
 n_patches = min(floor(size(im,1) / M), floor(size(im,2) / M));
 
@@ -21,40 +21,93 @@ for i=1:n_patches
 end
 
 % k-means clustering on patch vectors
-bins = 50; % amount of clusters
+bins = 100; % amount of clusters
 [idxs, centroids] = kmeans(vectors, bins);
 centroids = round(centroids); % round here? since pixel values are not doubles
 
 % gather centroids as a long column vector of patches
 dict_patches = reshape(centroids, [M*M*bins, 1]); % 
 
+%%
 % build biadjacency matrix B
-B = zeros(size(im,1) * size(im,2), length(dict_patches), 'single');
-for i=1:size(B,1)
-  for j=1:size(B,2)
+I = [];
+J = [];
+V = [];
+for i=1:size(im,1) * size(im,2)
+  for j=1:length(dict_patches)
     if im_cw(i) == dict_patches(j)
-      B(i,j) = 1;
+      I(end+1) = i; % row indices
+      J(end+1) = j; % col indices
+      V(end+1) = 1; % values
     end
   end
 end
+
+B = sparse(I, J, V, size(im,1) * size(im,2), length(dict_patches));
 rowSums = sum(B, 2);
+
+%% visualize patches
+patchvis = reshape(dict_patches, [bins, M*M]);
+for i=1:bins
+  subplot(sqrt(bins), sqrt(bins), i)
+  imagesc(reshape(patchvis(i, :), [M, M]))
+  axis off;
+end
+colormap gray;
+
 %%
 % build snake
-[xs, ys] = build_snake(130, 110, 50);
+[xs, ys] = build_snake(330, 330, 120);
+C = [xs' ys'];
 
-%P_in = (B*p_in)./rowSums;
-%imagesc(reshape(P_in, [size(im,1), size(im,2)]));
+mask = poly2mask(xs, ys, size(im, 1), size(im, 2));
+c_in = reshape(mask, [size(im,1)*size(im,2), 1]);
+A_in = length(find(mask > 0));
+A_out = size(im,1)*size(im,2) - A_in;
+f_in = (B'*c_in)/A_in;
+f_out = (B'*~c_in)/A_out;
+Z = f_in + f_out;
+p_in = f_in./Z;
+p_in(isnan(p_in)) = 0.5;
+
+%% visualize patch probs
+patchprob = reshape(p_in, [bins, M*M]);
+colors = mean(patchprob, 2);
+colorim = zeros(M*sqrt(bins), M*sqrt(bins));
+colors_ij = reshape(colors, [sqrt(bins) sqrt(bins)]);
+for i=1:sqrt(bins)
+  for j=1:sqrt(bins)
+    row = 1 + (i-1) * M;
+    col = 1 + (j-1) * M;
+    colorim(row:(row+M-1), col:(col+M-1)) = ones(M, M) * colors_ij(i, j);
+  end
+end
+imagesc(colorim);
+colormap redblue;
+
+%%
+P_in = (B*p_in) ./ rowSums;
+imagesc(reshape(P_in, [size(im,1), size(im,2)]));
+colormap redblue;
+hold on;
+plot([C(:,2); C(1,2)],[C(:,1); C(1,1)],'r','linewidth',2)
+
+
+%%
+[xs, ys] = build_snake(330, 330, 120);
+C = [xs' ys'];
 
 imshow(im);
 hold on;
 smoothMat = ImplicitSmoothMat(0.01, 0.3, length(xs));
-for i = 1:10
+for i = 1:100
   C = iterate(im, smoothMat, B, [xs' ys']);
   xs = C(:,1)';
   ys = C(:,2)';
-  plot([C(:,2); C(1,2)],[C(:,1); C(1,1)],'r','linewidth',2)
-  drawnow;
-  disp(i);
+  if mod(i, 10) == 0
+    plot([C(:,2); C(1,2)],[C(:,1); C(1,1)],'r','linewidth',2)
+    drawnow;
+  end
 end
 
 
@@ -81,7 +134,7 @@ function C = iterate (im, smoothMat, B, C)
   end
   normals = SnakeNormal([xs' ys']);
 
-  con = 10*diag(fext)*normals;
+  con = 10*diag(-fext)*normals;
   snakenew = [xs' + con(:,1), ys' + con(:,2)];
 
   C = smoothMat*snakenew;
